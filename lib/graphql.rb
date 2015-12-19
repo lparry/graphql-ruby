@@ -67,6 +67,7 @@ require 'graphql/schema/printer'
 
 require 'graphql/execution_error'
 require 'graphql/query'
+require 'graphql/query_cache'
 require 'graphql/repl'
 require 'graphql/static_validation'
 require 'graphql/version'

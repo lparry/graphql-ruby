@@ -37,7 +37,7 @@ class GraphQL::Query
   def initialize(schema, query_string, context: nil, variables: {}, debug: false, validate: true, operation_name: nil)
     @schema = schema
     @debug = debug
-    @context = Context.new(query: self, values: context)
+    @provided_context = context
     @validate = validate
     @operation_name = operation_name
     @fragments = {}
@@ -59,50 +59,82 @@ class GraphQL::Query
       return { "errors" => validation_errors }
     end
 
-    @result ||= Executor.new(self).result
+    @result ||= execute(
+      variables: @provided_variables,
+      context: @provided_context,
+      operation_name: @operation_name)
   end
 
-
-  # This is the operation to run for this query.
-  # If more than one operation is present, it must be named at runtime.
-  # @return [GraphQL::Language::Nodes::OperationDefinition, nil]
-  def selected_operation
-    @selected_operation ||= find_operation(@operations, @operation_name)
-  end
-
-  # Determine the values for variables of this query, using default values
-  # if a value isn't provided at runtime.
-  #
-  # Raises if a non-null variable isn't provided at runtime.
-  # @return [GraphQL::Query::Variables] Variables to apply to this query
-  def variables
-    @variables ||= GraphQL::Query::Variables.new(
-      schema,
-      selected_operation.variables,
-      @provided_variables
+  # Execute the query string with the provided variables & context
+  def execute(variables:, context:, operation_name:)
+    proxy = Proxy.new(
+      self,
+      context: context,
+      variables: variables,
+      operation_name: operation_name,
     )
+    GraphQL::Query::Executor.new(proxy).result
   end
 
-  private
 
+  # Errors as a result of static validation
+  # @return [Array<Hash>] Error hashes with `message`, `line` and `column`.
   def validation_errors
     @validation_errors ||= schema.static_validator.validate(document)
   end
 
+  private
+  class Proxy
+    extend Forwardable
+    def initialize(query, context:, variables:, operation_name:)
+      @query = query
+      @operation_name = operation_name
+      @provided_context = context
+      @provided_variables = variables
+    end
 
-  def find_operation(operations, operation_name)
-    if operations.length == 1
-      operations.values.first
-    elsif operations.length == 0
-      nil
-    elsif !operations.key?(operation_name)
-      raise OperationNameMissingError, operations.keys
-    else
-      operations[operation_name]
+
+    # Determine the values for variables of this query, using default values
+    # if a value isn't provided at runtime.
+    #
+    # Raises if a non-null variable isn't provided at runtime.
+    # @return [GraphQL::Query::Variables] Variables to apply to this query
+    def variables
+      @variables ||= GraphQL::Query::Variables.new(
+        @query.schema,
+        @selected_operation.variables,
+        @provided_variables
+      )
+    end
+
+    def context
+      @context ||= Context.new(query: self, values: @provided_context)
+    end
+
+    # This is the operation to run for this query.
+    # If more than one operation is present, it must be named at runtime.
+    # @return [GraphQL::Language::Nodes::OperationDefinition, nil]
+    def selected_operation
+      @selected_operation ||= find_operation(@query.operations, @operation_name)
+    end
+
+    def_delegators :@query, :operations, :fragments, :schema, :debug
+
+    private
+
+    def find_operation(operations, operation_name)
+      if operations.length == 1
+        operations.values.first
+      elsif operations.length == 0
+        nil
+      elsif !operations.key?(operation_name)
+        raise OperationNameMissingError, operations.keys
+      else
+        operations[operation_name]
+      end
     end
   end
 end
-
 require 'graphql/query/arguments'
 require 'graphql/query/base_execution'
 require 'graphql/query/context'
